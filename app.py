@@ -1,4 +1,4 @@
-import streamlit as st
+luiimport streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
@@ -52,7 +52,7 @@ class StrictUniversityGrading:
 
         # 4. Filter Students for Statistics based on PROTOCOL
         # ---------------------------------------------------------
-        if self.protocol == 'Protocol A (Strict)':
+        if self.protocol == 'Protocol A (Exclusive)':
             # EXCLUDE ESE Failures and Absentees from Mean/SD
             # Only use students who passed the hurdles
             stats_mask = (
