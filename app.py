@@ -168,7 +168,7 @@ def main():
         st.subheader("📊 Statistical Protocol")
         protocol_choice = st.radio(
             "Select Grading Logic:",
-            ["Protocol A (Strict)", "Protocol B (Inclusive)"],
+            ["Protocol A (Exclusive)", "Protocol B (Inclusive)"],
             help="Protocol A: Excludes ESE failures from Mean/SD (Prevents inflation).\nProtocol B: Includes failures (Lowers Mean)."
         )
         
