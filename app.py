@@ -52,7 +52,7 @@ class StrictUniversityGrading:
 
         # 4. Filter Students for Statistics based on PROTOCOL
         # ---------------------------------------------------------
-        if self.protocol == 'Protocol A (Exclusive)':
+        if self.protocol == 'Protocol A (Strict)':
             # EXCLUDE ESE Failures and Absentees from Mean/SD
             # Only use students who passed the hurdles
             stats_mask = (
@@ -168,7 +168,7 @@ def main():
         st.subheader("📊 Statistical Protocol")
         protocol_choice = st.radio(
             "Select Grading Logic:",
-            ["Protocol A (Exclusive)", "Protocol B (Inclusive)"],
+            ["Protocol A (Strict)", "Protocol B (Inclusive)"],
             help="Protocol A: Excludes ESE failures from Mean/SD (Prevents inflation).\nProtocol B: Includes failures (Lowers Mean)."
         )
         
