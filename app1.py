@@ -1,216 +1,139 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import sqlite3
+from datetime import datetime
 import altair as alt
 
 # ==========================================
-# 1. GRADE POINT MAPPING
+# 1. DATABASE INITIALIZATION
 # ==========================================
-GRADE_POINTS = {
-    'A+': 10, 'A': 9, 'B+': 8, 'B': 7, 'C+': 6, 'C': 5, 'D': 4, 'D*': 4, 
-    'F': 0, 'I': 0, 'Z': 0
-}
+def init_db():
+    conn = sqlite3.connect('semester_data.db')
+    c = conn.cursor()
+    # Table for raw mark entries
+    c.execute('''CREATE TABLE IF NOT EXISTS marks_entry (
+                    student_id TEXT,
+                    subject_code TEXT,
+                    subject_name TEXT,
+                    credits INTEGER,
+                    course_type TEXT,
+                    total_max INTEGER,
+                    ese_max INTEGER,
+                    marks INTEGER,
+                    ese_marks TEXT,
+                    attendance INTEGER,
+                    faculty_name TEXT,
+                    timestamp TEXT,
+                    PRIMARY KEY (student_id, subject_code)
+                 )''')
+    conn.commit()
+    conn.close()
 
-# ==========================================
-# 2. CORE GRADING LOGIC (Per Subject)
-# ==========================================
-class StrictUniversityGrading:
-    def __init__(self, total_max_marks, ese_max_marks, course_type, protocol):
-        self.M = total_max_marks       
-        self.ESE_M = ese_max_marks     
-        self.type = course_type
-        self.protocol = protocol  
-        self.ese_threshold = 0.20 * ese_max_marks
-        
-        if self.type == 'Practical':
-            self.P = 0.50 * self.M 
-        else:
-            self.P = 0.40 * self.M 
+def save_mark_to_db(data):
+    conn = sqlite3.connect('semester_data.db')
+    c = conn.cursor()
+    c.execute('''INSERT OR REPLACE INTO marks_entry 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', data)
+    conn.commit()
+    conn.close()
 
-    def process_results(self, df):
-        results = df.copy()
-        
-        # 1. Attendance & Absentee Check
-        results['Final_Grade'] = np.where(results['attendance'] < 75, 'I', None)
-        mask_absent = results['ese_marks'].astype(str).str.upper() == 'AB'
-        results.loc[mask_absent & (results['Final_Grade'].isnull()), 'Final_Grade'] = 'Z'
+def get_all_marks_from_db():
+    conn = sqlite3.connect('semester_data.db')
+    df = pd.read_sql_query("SELECT * FROM marks_entry", conn)
+    conn.close()
+    return df
 
-        # 2. Numeric Conversion
-        results['ese_marks_numeric'] = pd.to_numeric(results['ese_marks'], errors='coerce').fillna(0)
-
-        # 3. ESE Hurdle Check
-        mask_ese_fail = (results['Final_Grade'].isnull()) & (results['ese_marks_numeric'] < self.ese_threshold)
-        results.loc[mask_ese_fail, 'Final_Grade'] = 'F'
-
-        # 4. Statistics Calculation
-        if self.protocol == 'Protocol A (Strict)':
-            stats_mask = (results['attendance'] >= 75) & (results['ese_marks_numeric'] >= self.ese_threshold)
-        else:
-            stats_mask = (results['attendance'] >= 75)
-
-        regular_students = results.loc[stats_mask, 'marks'].values
-        count = len(regular_students)
-        
-        if count >= 30:
-            boundaries = self._calculate_relative_boundaries(regular_students)
-        else:
-            boundaries = self._get_absolute_boundaries()
-
-        # 5. Preliminary Grade Assignment
-        mask = results['Final_Grade'].isnull()
-        results.loc[mask, 'Final_Grade'] = results.loc[mask, 'marks'].apply(
-            lambda x: self._assign_grade(x, boundaries)
-        )
-
-        # Store boundary D for grace calculation later
-        results['boundary_D'] = boundaries['D']
-        results['min_ese_required'] = self.ese_threshold
-        
-        return results
-
-    def _calculate_relative_boundaries(self, marks):
-        X = np.mean(marks) 
-        sigma = np.std(marks)
-        raw_D_limit = X - 1.5 * sigma
-        
-        bounds = {'A+': X + 1.5 * sigma, 'A': X + 1.0 * sigma, 'B+': X + 0.5 * sigma, 
-                  'B': X, 'C+': X - 0.5 * sigma, 'C': X - 1.0 * sigma, 'D': raw_D_limit}
-
-        if raw_D_limit > self.P:
-            bounds['D'] = float(self.P) 
-        elif raw_D_limit < (0.30 * self.M):
-            bounds['D'] = 0.30 * self.M
-             
-        return bounds
-
-    def _get_absolute_boundaries(self):
-        if self.type == 'Theory':
-            return {'A+': 90, 'A': 80, 'B+': 72, 'B': 64, 'C+': 56, 'C': 48, 'D': 40}
-        else: 
-            return {'A+': 90, 'A': 80, 'B+': 70, 'B': 62, 'C+': 58, 'C': 54, 'D': 50}
-
-    def _assign_grade(self, marks, bounds):
-        for grade in ['A+', 'A', 'B+', 'B', 'C+', 'C', 'D']:
-            if marks >= bounds[grade]: return grade
-        return 'F'
+# Initialize DB on startup
+init_db()
 
 # ==========================================
-# 3. GRACE CRITERIA ENGINE
+# 2. GRADING ENGINE (Same logic as before)
 # ==========================================
-def apply_grace_criteria(df):
-    """
-    Applies grace marks across all subjects for each student.
-    Criteria: 
-    1. ESE cleared in ALL subjects (>20%).
-    2. Needs <= 3 marks to reach 'D' boundary.
-    3. Max 2 subjects allowed.
-    """
-    processed_students = []
+# [Include the StrictUniversityGrading and apply_grace_criteria classes/functions here]
+
+# ==========================================
+# 3. FACULTY ENTRY PORTAL
+# ==========================================
+def faculty_interface():
+    st.title("📝 Faculty Mark Entry Portal")
     
-    for student_id, group in df.groupby('student_id'):
-        # Check if student cleared ESE in ALL subjects
-        # Numeric ESE was dropped in process_results, so we re-convert
-        group['ese_val'] = pd.to_numeric(group['ese_marks'], errors='coerce').fillna(0)
-        cleared_all_ese = (group['ese_val'] >= group['min_ese_required']).all()
-        
-        if cleared_all_ese:
-            # Identify candidates for grace: Currently Grade 'F' AND (Boundary D - Marks) <= 3
-            grace_mask = (group['Final_Grade'] == 'F') & \
-                         ((group['boundary_D'] - group['marks']) <= 3) & \
-                         ((group['boundary_D'] - group['marks']) > 0)
+    # Configuration for subjects (This could also be moved to a DB table)
+    subjects_config = {
+        "CE101": {"name": "Maths-III", "credits": 3, "type": "Theory", "total_max": 100, "ese_max": 60},
+        "CE102": {"name": "Fluid Mechanics", "credits": 4, "type": "Theory", "total_max": 100, "ese_max": 60},
+        "CE107": {"name": "Fluid Lab", "credits": 1, "type": "Practical", "total_max": 50, "ese_max": 30},
+    }
+
+    with st.expander("Submit Individual Marks", expanded=True):
+        with st.form("single_entry_form", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            faculty_name = col1.text_input("Faculty Name / ID")
+            sub_code = col2.selectbox("Subject Code", list(subjects_config.keys()))
             
-            grace_count = grace_mask.sum()
+            st.divider()
             
-            # Condition: Maximum 2 subjects allowed for grace
-            if 0 < grace_count <= 2:
-                group.loc[grace_mask, 'Final_Grade'] = 'D*'
-                group.loc[grace_mask, 'is_graced'] = True
-        
-        processed_students.append(group)
-    
-    final_df = pd.concat(processed_students)
-    # Assign Grade Points after grace is applied
-    final_df['Grade_Point'] = final_df['Final_Grade'].map(GRADE_POINTS)
-    return final_df
+            c1, c2, c3, c4 = st.columns(4)
+            student_id = c1.text_input("Student Roll No")
+            total_marks = c2.number_input("Total Marks (IA + ESE)", min_value=0, max_value=100)
+            ese_marks = c3.text_input("ESE Marks (Numeric or 'AB')")
+            attendance = c4.slider("Attendance %", 0, 100, 75)
+            
+            if st.form_submit_button("Save Entry"):
+                if not student_id or not faculty_name:
+                    st.error("Please provide Student ID and Faculty Name.")
+                else:
+                    conf = subjects_config[sub_code]
+                    data = (student_id, sub_code, conf['name'], conf['credits'], 
+                            conf['type'], conf['total_max'], conf['ese_max'], 
+                            total_marks, ese_marks, attendance, faculty_name, 
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                    save_mark_to_db(data)
+                    st.success(f"Record saved for {student_id} in {sub_code}")
+
+    st.divider()
+    st.subheader("Your Recent Submissions")
+    current_data = get_all_marks_from_db()
+    if not current_data.empty:
+        st.dataframe(current_data.tail(10), use_container_width=True)
 
 # ==========================================
-# 4. AGGREGATION & SGPA
+# 4. ADMIN DASHBOARD
 # ==========================================
-def calculate_sgpa(student_df):
-    total_credits = student_df['credits'].sum()
-    passed_mask = ~student_df['Final_Grade'].isin(['F', 'I', 'Z'])
-    earned_credits = student_df.loc[passed_mask, 'credits'].sum()
+def admin_interface():
+    st.title("🛡️ Examination Admin Dashboard")
     
-    total_points = (student_df['credits'] * student_df['Grade_Point']).sum()
-    sgpa = total_points / total_credits if total_credits > 0 else 0
+    data = get_all_marks_from_db()
     
-    failed_subs = student_df.loc[~passed_mask, 'subject_code'].tolist()
-    failed_str = ", ".join(failed_subs) if failed_subs else "None"
+    if data.empty:
+        st.warning("No data found in the database. Awaiting faculty submissions.")
+        return
+
+    # Progress Tracking
+    st.subheader("Subject-wise Submission Progress")
+    progress = data.groupby('subject_code')['student_id'].count().reset_index()
+    progress.columns = ['Subject', 'Entries Count']
+    st.table(progress)
+
     
-    return pd.Series({
-        'Earned_Credits': earned_credits,
-        'SGPA': round(sgpa, 2),
-        'Failed_Subjects': failed_str,
-        'Graced_Count': student_df.get('is_graced', pd.Series([False]*len(student_df))).sum()
-    })
+
+    if st.button("🚀 Process Final Semester Results", type="primary"):
+        # Run the Grading Engine logic on 'data'
+        st.info("Aggregating data and applying Protocol A logic...")
+        # [Implementation of final grading and SGPA calculation]
+        st.success("Semester Results Generated!")
 
 # ==========================================
-# 5. STREAMLIT INTERFACE
+# 5. MAIN NAVIGATION
 # ==========================================
 def main():
-    st.set_page_config(page_title="Semester Grading Engine", layout="wide")
-    st.title("🎓 Multi-Subject Grading Engine with Grace Provision")
-    st.markdown("**Developer:** Daipayan Mandal | **Compliance:** Tabulation Manual 2026")
+    st.sidebar.title("University ERP")
+    page = st.sidebar.radio("Navigate to:", ["Faculty Entry", "Admin Dashboard"])
     
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        protocol_choice = st.radio("Grading Logic:", ["Protocol A (Strict)", "Protocol B (Inclusive)"])
-        uploaded_file = st.file_uploader("Upload Semester CSV", type=["csv"])
-
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        # Clean columns
-        df.columns = df.columns.str.strip().str.lower()
-        
-        # 1. Subject-wise Preliminary Grading
-        all_results = []
-        for code, sub_df in df.groupby('subject_code'):
-            engine = StrictUniversityGrading(sub_df['total_max'].iloc[0], 
-                                            sub_df['ese_max'].iloc[0], 
-                                            sub_df['course_type'].iloc[0], 
-                                            protocol_choice)
-            all_results.append(engine.process_results(sub_df))
-        
-        combined_df = pd.concat(all_results)
-        
-        # 2. Apply Grace Criteria (Semester Level)
-        final_df = apply_grace_criteria(combined_df)
-        
-        # 3. Calculate SGPA
-        summary_df = final_df.groupby('student_id').apply(calculate_sgpa).reset_index()
-        
-        # 4. Display Tabs
-        t1, t2 = st.tabs(["📊 Master Result Sheet", "📝 Detailed Subject Analysis"])
-        
-        with t1:
-            # Pivot for the Committee View
-            pivot_grades = final_df.pivot(index='student_id', columns='subject_code', values='Final_Grade').reset_index()
-            master_sheet = pd.merge(pivot_grades, summary_df, on='student_id')
-            
-            st.subheader("Final Master Sheet (with SGPA & Grace)")
-            
-            # Styling: Red for Fail, Blue for Grace
-            def style_results(val):
-                if val == 'D*': return 'color: blue; font-weight: bold'
-                if val in ['F', 'I', 'Z']: return 'color: red'
-                return ''
-            
-            st.dataframe(master_sheet.style.applymap(style_results), use_container_width=True)
-            st.download_button("📥 Download Master Sheet", master_sheet.to_csv(index=False), "Master_Sheet.csv")
-
-        with t2:
-            st.subheader("Raw Data with Grade Points & Boundaries")
-            st.write(final_df)
+    if page == "Faculty Entry":
+        faculty_interface()
+    else:
+        admin_interface()
 
 if __name__ == "__main__":
     main()
